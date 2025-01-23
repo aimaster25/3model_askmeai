@@ -10,7 +10,7 @@ from google.generativeai import configure as palm_configure
 from google.generativeai import GenerativeModel as PalmModel
 
 # ======== OpenAI (chatGPT) ========
-import openai
+from openai import OpenAI
 
 # ======== Anthropic (Claude) ========
 import anthropic
