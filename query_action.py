@@ -2,190 +2,57 @@ from elasticsearch import Elasticsearch
 from pymongo import MongoClient
 from datetime import datetime
 import asyncio
-from google.generativeai import configure, GenerativeModel
 import os
 import streamlit as st
 
+# ======== Gemini (Google Generative AI) ========
+from google.generativeai import configure as palm_configure
+from google.generativeai import GenerativeModel as PalmModel
+
+# ======== OpenAI (chatGPT) ========
+import openai
+
+# ======== Anthropic (Claude) ========
+import anthropic
+
 
 class DatabaseSearch:
-    """데이터베이스 연결 및 검색 기능을 담당하는 클래스"""
+    """Mongo + Elasticsearch 로 뉴스 기사 검색"""
 
     def __init__(self):
-        # MongoDB 연결 설정
+        # 1) Mongo 연결
         try:
             self.mongo_client = MongoClient(
                 "mongodb+srv://clairetranslatorno1:qwFDNE011iRVTH1g@cluster0.guwrj.mongodb.net/crawlingdb",
                 serverSelectionTimeoutMS=5000,
             )
-            self.mongo_client.server_info()  # 연결 테스트
+            self.mongo_client.server_info()
             self.db = self.mongo_client["crawlingdb"]
             self.mongo_collection = self.db["articles"]
         except Exception as e:
-            print(f"MongoDB 연결 실패: {e}")
+            st.error(f"MongoDB 연결 실패: {e}")
             raise
 
-        # Elasticsearch 연결 설정
-
+        # 2) Elasticsearch 연결
         try:
             self.es = Elasticsearch(
                 "https://my-elasticsearch-project-e8b084.es.us-east-1.aws.elastic.cloud:443",
                 api_key="eld0RmVKUUI5LUtzQm51ZlJ1Sy06TVdOREExV2dRWWlDdGgxTjZuSHFKZw==",
                 verify_certs=True,
             )
-
             if not self.es.ping():
-                st.error("Elasticsearch 서버에 연결할 수 없습니다.")
+                st.error("Elasticsearch 서버 연결 실패.")
                 raise ConnectionError("Elasticsearch 서버에 연결할 수 없습니다.")
-            # st.success("Elastic Cloud 연결 성공!")
-
         except Exception as e:
             st.error(f"Elasticsearch 연결 실패: {e}")
             raise
 
-    def create_es_index(self):
-        """Elasticsearch 인덱스 생성"""
-        settings = {
-            "settings": {
-                "analysis": {
-                    "analyzer": {
-                        "korean": {
-                            "type": "custom",
-                            "tokenizer": "standard",
-                            "filter": ["lowercase", "trim", "stop"],
-                        }
-                    }
-                }
-            },
-            "mappings": {
-                "dynamic": False,
-                "properties": {
-                    "title": {
-                        "type": "text",
-                        "analyzer": "korean",
-                        "fields": {
-                            "keyword": {"type": "keyword"},
-                            "english": {"type": "text", "analyzer": "english"},
-                            "ngram": {"type": "text", "analyzer": "standard"},
-                        },
-                    },
-                    "cleaned_content": {
-                        "type": "text",
-                        "analyzer": "korean",
-                        "fields": {
-                            "english": {"type": "text", "analyzer": "english"},
-                            "ngram": {"type": "text", "analyzer": "standard"},
-                        },
-                    },
-                    "url": {"type": "keyword"},
-                    "crawled_date": {
-                        "type": "date",
-                        "format": "strict_date_optional_time||epoch_millis",
-                    },
-                    "published_date": {
-                        "type": "date",
-                        "format": "strict_date_optional_time||epoch_millis",
-                    },
-                    "categories": {"type": "keyword"},
-                    "metadata": {
-                        "type": "object",
-                        "properties": {
-                            "word_count": {"type": "integer"},
-                            "sentence_count": {"type": "integer"},
-                            "common_words": {"type": "object", "enabled": False},
-                        },
-                    },
-                },
-            },
-        }
-
-        try:
-            if self.es.indices.exists(index="news_articles"):
-                self.es.indices.delete(index="news_articles")
-            self.es.indices.create(index="news_articles", body=settings)
-            print("Elasticsearch 인덱스가 생성되었습니다.")
-        except Exception as e:
-            print(f"인덱스 생성 중 오류 발생: {e}")
-            raise
-
-    def sync_mongodb_to_elasticsearch(self):
-        """MongoDB의 데이터를 Elasticsearch로 동기화"""
-        self.create_es_index()
-        mongo_docs = self.mongo_collection.find()
-        success_count = 0
-        error_count = 0
-
-        for doc in mongo_docs:
-            try:
-                doc_id = str(doc.pop("_id"))
-                cleaned_doc = {
-                    "title": doc.get("title", ""),
-                    "cleaned_content": doc.get("cleaned_content", ""),
-                    "url": doc.get("url", ""),
-                    "crawled_date": doc.get("crawled_date", ""),
-                    "published_date": doc.get("published_date", ""),
-                    "categories": doc.get("categories", []),
-                    "metadata": {
-                        "word_count": doc.get("metadata", {}).get("word_count", 0),
-                        "sentence_count": doc.get("metadata", {}).get(
-                            "sentence_count", 0
-                        ),
-                        "common_words": doc.get("metadata", {}).get("common_words", {}),
-                    },
-                }
-                self.es.index(index="news_articles", id=doc_id, body=cleaned_doc)
-                success_count += 1
-
-                if success_count % 100 == 0:
-                    print(f"{success_count}개의 문서가 성공적으로 동기화되었습니다.")
-
-            except Exception as e:
-                print(f"문서 동기화 중 오류 발생: {str(e)[:200]}...")
-                error_count += 1
-                continue
-
-        print(f"\n동기화 완료:")
-        print(f"성공: {success_count}개")
-        print(f"실패: {error_count}개")
-
-    @staticmethod
-    def extract_keywords_from_query(query):
-        """자연어 쿼리에서 핵심 키워드 추출"""
-        stop_words = set(
-            [
-                "은",
-                "는",
-                "이",
-                "가",
-                "을",
-                "를",
-                "에",
-                "에서",
-                "로",
-                "으로",
-                "언제",
-                "어디서",
-                "어떻게",
-                "무엇을",
-                "누가",
-                "왜",
-                "있나요",
-                "있어요",
-                "인가요",
-                "했나요",
-                "됐나요",
-                "열렸어",
-                "있어",
-            ]
-        )
-        words = query.replace("?", "").replace(".", "").split()
-        keywords = [word for word in words if word not in stop_words]
-        return keywords
-
     async def semantic_search(self, query, size=7):
-        """의미 기반 검색 수행"""
+        """의미 기반 검색"""
         try:
-            keywords = self.extract_keywords_from_query(query)
-            keywords_str = " ".join(keywords)
+            # (간단 키워드 추출)
+            words = query.replace("?", "").replace(".", "").split()
+            keywords_str = " ".join(words)
 
             search_query = {
                 "query": {
@@ -218,387 +85,309 @@ class DatabaseSearch:
                         "minimum_should_match": 1,
                     }
                 },
-                "highlight": {
-                    "fields": {
-                        "title": {"number_of_fragments": 1},
-                        "cleaned_content": {
-                            "number_of_fragments": 3,
-                            "fragment_size": 150,
-                        },
-                    },
-                    "pre_tags": ["<strong>"],
-                    "post_tags": ["</strong>"],
-                },
-                "_source": [
-                    "title",
-                    "cleaned_content",
-                    "url",
-                    "crawled_date",
-                    "published_date",
-                    "categories",
-                ],
                 "size": size,
                 "sort": [{"_score": "desc"}],
             }
 
             result = self.es.search(index="news_articles", body=search_query)
-
-            processed_results = []
+            processed = []
             for hit in result["hits"]["hits"]:
-                source = hit["_source"]
-                highlights = hit.get("highlight", {})
-
-                content_preview = " ... ".join(highlights.get("cleaned_content", []))
-                if not content_preview:
-                    content_preview = source["cleaned_content"][:300] + "..."
-
-                processed_results.append(
+                s = hit["_source"]
+                processed.append(
                     {
-                        "title": source["title"],
-                        "content": source["cleaned_content"],
-                        "content_preview": content_preview,
-                        "url": source["url"],
-                        "crawled_date": source.get("crawled_date", "날짜 정보 없음"),
-                        "published_date": source.get(
-                            "published_date", "날짜 정보 없음"
-                        ),
-                        "categories": source.get("categories", []),
+                        "title": s["title"],
+                        "content": s["cleaned_content"],
+                        "url": s["url"],
+                        "published_date": s.get("published_date", "날짜 정보 없음"),
+                        "categories": s.get("categories", []),
                         "score": hit["_score"],
-                        "highlights": highlights,
                     }
                 )
-
-            return processed_results
-
+            return processed
         except Exception as e:
-            print(f"검색 중 오류 발생: {e}")
+            st.error(f"검색 오류: {e}")
             return []
 
 
 class ResponseGeneration:
-    """초기 답변 생성을 담당하는 클래스"""
+    """
+    뉴스 기사 기반 '초기 답변' 생성:
+      1) 의도 분석
+      2) 기사 없으면 knowledge mode
+      3) 기사 있으면:
+         - relevance<0.3 => 하이브리드
+         - else => full context
+      4) 모델별 (Gemini/chatGPT/Claude) 로직
+    """
 
     def __init__(self):
+        # Gemini API
         try:
-            # Streamlit secrets의 API 키를 환경 변수로 설정
-            os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
-
-            # 환경 변수에서 API 키 가져오기
-            api_key = os.getenv("GEMINI_API_KEY")
-
-            if not api_key:
-                raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
-
-            configure(api_key=api_key)
-            self.model = GenerativeModel("gemini-2.0-flash-exp")
-
+            gem_key = st.secrets["GEMINI_API_KEY"]
+            palm_configure(api_key=gem_key)
+            self.gemini_model = PalmModel("gemini-2.0-flash-exp")
         except Exception as e:
-            st.error(f"API 키 로드 중 오류 발생: {e}")
-            raise
+            st.error(f"Gemini API 설정 오류: {e}")
+            self.gemini_model = None
 
-    async def find_relevant_article(self, query, articles):
-        """관련 기사 찾기"""
-        keywords = set(query.lower().replace("?", " ").replace("!", " ").split())
-        best_article = None
-        max_score = 0
+        # OpenAI API
+        try:
+            openai.api_key = st.secrets["OPENAI_API_KEY"]
+        except Exception as e:
+            st.error(f"OpenAI API 설정 오류: {e}")
 
-        for article in articles:
-            text = (article["title"] + " " + article["content"]).lower()
-            score = sum(1 for keyword in keywords if keyword in text)
+        # Anthropic API
+        try:
+            self.anthropic_client = anthropic.Client(
+                api_key=st.secrets["ANTHROPIC_API_KEY"]
+            )
+        except Exception as e:
+            st.error(f"Anthropic API 설정 오류: {e}")
+            self.anthropic_client = None
 
-            if score > max_score:
-                max_score = score
-                best_article = article
-
-        if not best_article or max_score == 0:
-            return None, 0.0
-
-        relevance = max_score / len(keywords)
-        return best_article, min(relevance, 1.0)
-
-    async def generate_initial_response(self, query, articles):
-        """초기 답변 생성"""
-        # 의도 파악
-        intent_prompt = f"""다음 질문의 의도를 파악하여 검색에 사용할 핵심 키워드와 컨텍스트를 추출하세요:
-
+    def generate_initial_response(self, model_name, query, articles):
+        """
+        공통 '의도 분석 프롬프트' => (기사 없으면 / 하이브리드 / 풀컨텍스트) => 각 모델별 LLM 호출
+        반환값: best_article, related_articles, relevance_score, initial_response, intent_analysis
+        """
+        # 1) 의도분석
+        intent_prompt = f"""다음 질문의 의도를 파악하고, 핵심 키워드와 찾아야 할 정보를 요약해 주세요:
 질문: {query}
 
-다음 형식으로 답변하세요:
-1. 질문 유형: (사실 확인/날짜 확인/방법 설명/의견 요청/비교 분석 중 선택)
-2. 핵심 키워드: (검색에 사용할 중요 단어들)
-3. 찾아야 할 정보: (기사에서 찾아야 할 구체적인 정보)"""
-
-        intent_response = self.model.generate_content(intent_prompt)
-        intent_analysis = intent_response.text
+출력 형식 예:
+1. 질문 유형:
+2. 핵심 키워드:
+3. 필요한 정보:
+"""
+        intent_analysis = self._call_model(model_name, intent_prompt)
 
         if not articles:
-            # 기사가 없는 경우
-            knowledge_prompt = f"""당신은 AI 뉴스 전문 챗봇입니다.
-            
+            # 기사 없음 => general knowledge
+            knowledge_prompt = f"""당신은 AI 뉴스 챗봇입니다.
+질문 분석:
+{intent_analysis}
+기사가 없으므로 일반 지식으로 답변하세요.
+"""
+            init_resp = self._call_model(model_name, knowledge_prompt)
+            return None, [], 0.0, init_resp, intent_analysis
+        else:
+            best = articles[0]
+            score = best["score"]
+            # (2) 하이브리드 vs 풀컨텍스트
+            if score < 0.3:
+                # 하이브리드
+                prompt = f"""당신은 AI 뉴스 챗봇입니다.
+질문: {query}
 질문 분석:
 {intent_analysis}
 
-관련된 뉴스 기사를 찾을 수 없어 일반적인 지식을 기반으로 답변합니다.
+관련성이 낮은 기사:
+제목: {best['title']}
+내용: {best['content'][:500]}
 
-답변 시 다음 사항을 준수해주세요:
-1. 뉴스 인용이나 시간 정보는 제외합니다.
-2. 일반적인 사실과 개념 위주로 설명합니다.
-3. 최신 정보가 필요한 경우 "관련 최신 정보 없음"을 명시합니다.
-4. 정보의 한계를 명확히 설명합니다.
+- 기사 일부와 일반 지식을 함께 활용
+- 기사 정보와 일반 지식 구분
+"""
+                init_resp = self._call_model(model_name, prompt)
+                return best, articles[1:9], score, init_resp, intent_analysis
+            else:
+                # 풀컨텍스트
+                extra = ""
+                for i, art in enumerate(articles[1:3], start=1):
+                    extra += (
+                        f"- 추가기사{i}: {art['title']} (score={art['score']:.2f})\n"
+                    )
 
-답변 형식:
-1. 핵심 답변: (질문에 대한 직접적인 답변)
-2. 개념 설명: (주요 개념과 배경 지식)
-3. 한계 설명: (정보의 한계와 주의사항)"""
+                prompt = f"""당신은 AI 뉴스 챗봇입니다.
+질문: {query}
+질문 분석:
+{intent_analysis}
 
-            response = self.model.generate_content(knowledge_prompt)
-            return None, [], 0.0, response.text, intent_analysis
+주요 기사:
+- 제목: {best['title']}
+- 내용 일부: {best['content'][:500]}...
+- score={score:.2f}
 
-        best_article = articles[0]
-        if best_article["score"] < 0.3:
-            # 관련성이 낮은 경우
-            hybrid_prompt = self._create_hybrid_prompt(
-                query, intent_analysis, best_article
+추가 기사:
+{extra if extra else '없음'}
+
+가능하면 기사 내용 우선 활용, 필요한 경우 일반 지식.
+"""
+                init_resp = self._call_model(model_name, prompt)
+                return best, articles[1:9], score, init_resp, intent_analysis
+
+    def _call_model(self, model_name, prompt_text):
+        """모델별 호출"""
+        if model_name == "Gemini":
+            if not self.gemini_model:
+                return "Gemini 모델 오류"
+            resp = self.gemini_model.generate_content(prompt_text)
+            return resp.text
+
+        elif model_name == "chatGPT":
+            # gpt-4o-mini
+            completion = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt_text}],
+                max_tokens=512,
             )
-            response = self.model.generate_content(hybrid_prompt)
-            return (
-                best_article,
-                articles[1:9],
-                best_article["score"],
-                response.text,
-                intent_analysis,
+            return completion.choices[0].message.content
+
+        elif model_name == "Claude":
+            if not self.anthropic_client:
+                return "Anthropic 설정 오류"
+            claude_prompt = (
+                f"{anthropic.HUMAN_PROMPT} {prompt_text}\n{anthropic.AI_PROMPT}"
             )
-
-        # 기사 내용이 충분한 경우
-        full_context_prompt = self._create_full_context_prompt(
-            query,
-            intent_analysis,
-            best_article,
-            articles[1:] if len(articles) > 1 else [],
-        )
-        response = self.model.generate_content(full_context_prompt)
-        return (
-            best_article,
-            articles[1:9],
-            best_article["score"],
-            response.text,
-            intent_analysis,
-        )
-
-    def _create_hybrid_prompt(self, query, intent_analysis, best_article):
-        """하이브리드 프롬프트 생성"""
-        return f"""당신은 AI 뉴스 전문 챗봇입니다.
-
-질문 분석:
-{intent_analysis}
-
-관련성이 다소 낮은 뉴스 기사가 있습니다:
-제목: {best_article['title']}
-내용: {best_article['content']}
-발행일: {best_article.get('published_date', '날짜 정보 없음')}
-
-지침:
-1. 기사의 관련 내용을 부분적으로 활용하세요.
-2. AI 모델의 기본 지식을 활용하여 부족한 정보를 보완하세요.
-3. 기사 정보와 일반 지식을 구분하여 제시하세요.
-4. 정보의 출처(뉴스/일반 지식)를 명확히 표시하세요.
-
-형식:
-1. 직접 답변: (기사 내용 + 일반 지식 결합)
-2. 뉴스 정보: (관련 기사 내용 인용)
-3. 보충 설명: (AI 모델의 기본 지식 활용)
-4. 정보 출처: (각 정보의 출처 명시)"""
-
-    def _create_full_context_prompt(
-        self, query, intent_analysis, best_article, related_articles
-    ):
-        """전체 컨텍스트 프롬프트 생성"""
-        return f"""당신은 AI 뉴스 전문 챗봇입니다.
-
-질문 분석:
-{intent_analysis}
-
-주요 참고 기사:
-제목: {best_article['title']}
-내용: {best_article['content']}
-발행일: {best_article.get('published_date', '날짜 정보 없음')}
-
-추가 참고 기사들:
-{' '.join([f"- {art['title']} ({art.get('published_date', '날짜 정보 없음')})" for art in related_articles[:3]])}
-
-지침:
-1. 질문 유형에 맞는 적절한 형식으로 답변하세요.
-2. 기사의 내용을 우선적으로 활용하세요.
-3. 필요한 경우 AI 모델의 배경 지식을 활용하여 맥락을 보완하세요.
-4. 기사 정보와 배경 지식을 구분하여 제시하세요.
-
-답변 형식:
-1. 핵심 답변: (질문 의도에 맞는 직접적인 답변)
-2. 뉴스 근거: (관련 기사 내용 인용)
-3. 맥락 설명: (기사 내용 + 보완적 배경 지식)
-4. 시간 정보: (관련 사건의 시간 순서나 날짜 정보)"""
+            resp = self.anthropic_client.completions.create(
+                model="claude-3-5-sonnet-20241022",
+                prompt=claude_prompt,
+                max_tokens_to_sample=512,
+            )
+            return resp.completion
+        else:
+            return "알 수 없는 모델"
 
 
 class ResponseReview:
-    """답변 검토 및 개선을 담당하는 클래스"""
+    """답변 검토(리뷰) -> 동일 모델로 재호출"""
 
-    def __init__(self, model):
-        self.model = model
+    def __init__(self):
+        # 모델별 객체 재사용하려면 ResponseGeneration 객체를 참조해야 함
+        # 여기서는 간단히 secrets 재활용
+        try:
+            gem_key = st.secrets["GEMINI_API_KEY"]
+            palm_configure(api_key=gem_key)
+            self.gemini_model = PalmModel("gemini-2.0-flash-exp")
+        except:
+            self.gemini_model = None
 
-    async def review_and_enhance_response(
-        self, query, initial_response, intent_analysis, best_article, has_articles=True
-    ):
-        """답변 검토 및 개선"""
-        if has_articles:
-            review_prompt = self._create_article_review_prompt(
-                query, initial_response, intent_analysis, best_article
+        try:
+            openai.api_key = st.secrets["OPENAI_API_KEY"]
+        except:
+            pass
+
+        try:
+            self.anthropic_client = anthropic.Client(
+                api_key=st.secrets["ANTHROPIC_API_KEY"]
             )
+        except:
+            self.anthropic_client = None
+
+    def review_and_enhance_response(
+        self,
+        model_name,
+        query,
+        initial_response,
+        intent_analysis,
+        best_article,
+        has_articles,
+    ):
+        """(기사 있으면 기사 기반, 없으면 일반) -> 동일 모델로 '개선 프롬프트'"""
+        if has_articles and best_article:
+            # 기사 기반
+            review_prompt = f"""답변 검토:
+질문: {query}
+의도분석: {intent_analysis}
+주요 기사: {best_article['title']} (score={best_article.get('score',0):.2f})
+현재 답변: {initial_response}
+
+답변이 적절한지 평가 후, 필요 시 개선된 최종 답만 제시.
+불필요하면 '원본 답변 사용'만 출력.
+"""
         else:
-            review_prompt = self._create_general_review_prompt(
-                query, initial_response, intent_analysis
+            # 일반
+            review_prompt = f"""답변 검토:
+질문: {query}
+의도분석: {intent_analysis}
+(기사 없음)
+현재 답변: {initial_response}
+
+답변이 적절한지 평가 후, 필요 시 개선된 최종 답만 제시.
+불필요하면 '원본 답변 사용'만 출력.
+"""
+
+        improved = self._review_call(model_name, review_prompt)
+
+        if "원본 답변 사용" in improved:
+            return initial_response
+        return improved
+
+    def _review_call(self, model_name, prompt_text):
+        """모델별 재호출 -> 개선된 답변"""
+        if model_name == "Gemini":
+            if not self.gemini_model:
+                return "Gemini 모델 오류"
+            resp = self.gemini_model.generate_content(prompt_text)
+            return resp.text
+
+        elif model_name == "chatGPT":
+            c = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt_text}],
+                max_tokens=512,
             )
+            return c.choices[0].message.content
 
-        review_response = self.model.generate_content(review_prompt)
-        review_text = review_response.text
-
-        return initial_response if "원본 답변 사용" in review_text else review_text
-
-    def _create_article_review_prompt(
-        self, query, initial_response, intent_analysis, best_article
-    ):
-        """기사 기반 검토 프롬프트 생성"""
-        return f"""사용자의 질문과 AI의 답변을 검토하여 개선이 필요한지 평가해주세요.
-
-원래 질문: {query}
-질문 의도 분석: {intent_analysis}
-주요 기사 정보:
-- 제목: {best_article['title']}
-- 내용 요약: {best_article['content'][:300]}...
-- 발행일: {best_article.get('published_date', '날짜 정보 없음')}
-AI의 답변: {initial_response}
-
-검토 기준:
-1. 질문 의도 부합도
-2. 뉴스 기사 활용도
-3. 답변의 완성도
-4. 시간 정보의 정확성
-5. 형식의 적절성
-6. 다중 기사 통합 분석
-7. 맥락 설명의 충분성
-
-답변이 개선이 필요한 경우, 위 형식을 유지하면서 답변을 개선하고 개선된 답변만 말해주세요.
-개선이 필요없는 경우 "원본 답변 사용"이라고만 답변해주세요."""
-
-    def _create_general_review_prompt(self, query, initial_response, intent_analysis):
-        """일반 검토 프롬프트 생성"""
-        return f"""사용자의 질문과 AI의 답변을 검토하여 개선이 필요한지 평가해주세요.
-
-원래 질문: {query}
-질문 의도 분석: {intent_analysis}
-AI의 답변: {initial_response}
-
-검토 기준:
-1. 질문 의도 부합도
-2. 답변의 완성도와 정확성
-3. 설명의 명확성과 논리성
-4. 불필요하거나 누락된 정보
-5. 답변 형식의 적절성
-
-답변이 개선이 필요한 경우, 위 형식을 유지하면서 답변을 개선하고 개선된 답변만 말해주세요.
-개선이 필요없는 경우 "원본 답변 사용"이라고만 답변해주세요."""
+        elif model_name == "Claude":
+            if not self.anthropic_client:
+                return "(Claude 오류)"
+            claude_prompt = (
+                f"{anthropic.HUMAN_PROMPT} {prompt_text}\n{anthropic.AI_PROMPT}"
+            )
+            resp = self.anthropic_client.completions.create(
+                model="claude-3-5-sonnet-20241022",
+                prompt=claude_prompt,
+                max_tokens_to_sample=512,
+            )
+            return resp.completion
+        else:
+            return prompt_text  # 알 수 없는 모델 -> 그대로 반환
 
 
 class NewsChatbot:
-    """통합 뉴스 챗봇 클래스"""
+    """검색 -> 초기답변 -> 리뷰 -> 최종"""
 
     def __init__(self):
         self.db_search = DatabaseSearch()
         self.response_gen = ResponseGeneration()
-        self.response_review = ResponseReview(self.response_gen.model)
+        self.response_review = ResponseReview()
 
-    async def process_query(self, query):
-        """사용자 쿼리 처리"""
+    async def process_query(self, query, model_name="Gemini"):
         try:
-            # 1. 관련 기사 검색
+            # 1) 기사 검색
             articles = await self.db_search.semantic_search(query)
 
-            # 2. 초기 답변 생성
-            (
-                best_article,
-                related_articles,
-                relevance_score,
-                initial_response,
-                intent_analysis,
-            ) = await self.response_gen.generate_initial_response(query, articles)
+            # 2) 초기답변
+            result = self.response_gen.generate_initial_response(
+                model_name, query, articles
+            )
+            # unpack
+            if len(result) == 5:
+                (
+                    best_article,
+                    related_articles,
+                    relevance_score,
+                    init_resp,
+                    intent_analysis,
+                ) = result
+            else:
+                # (best_article, related_articles, score, init_resp)
+                best_article, related_articles, relevance_score, init_resp = result
+                intent_analysis = "(분석 없음)"
 
-            # 3. 답변 검토 및 개선
-            final_response = await self.response_review.review_and_enhance_response(
+            # 3) 리뷰
+            final_resp = self.response_review.review_and_enhance_response(
+                model_name,
                 query,
-                initial_response,
+                init_resp,
                 intent_analysis,
-                best_article if articles else None,
-                has_articles=bool(articles),
+                best_article,
+                bool(best_article),
             )
 
-            return best_article, related_articles, relevance_score, final_response
+            return best_article, related_articles, relevance_score, final_resp
 
         except Exception as e:
-            print(f"쿼리 처리 중 오류 발생: {e}")
-            return None, [], 0.0, "처리 중 오류가 발생했습니다."
-
-    async def run(self):
-        """챗봇 실행"""
-        print("챗봇을 초기화하는 중...")
-
-        try:
-            print("\n향상된 AI 뉴스 챗봇이 준비되었습니다!")
-            print("'exit' 또는 'quit'을 입력하면 종료됩니다.")
-            print("질문을 입력해주세요.\n")
-
-            while True:
-                user_input = input("사용자: ").strip()
-                if not user_input:
-                    continue
-
-                if user_input.lower() in ["exit", "quit"]:
-                    print("챗봇을 종료합니다!")
-                    break
-
-                print("\n처리 중...", end="\r")
-
-                try:
-                    main_article, related_articles, score, response = (
-                        await self.process_query(user_input)
-                    )
-
-                    print("\n챗봇: ", response)
-
-                    if main_article and score > 0.2:
-                        self._display_article_info(
-                            main_article, score, related_articles
-                        )
-
-                except Exception as e:
-                    print(f"\n오류가 발생했습니다: {str(e)}")
-                    print("다시 시도해주세요.\n")
-
-        except Exception as e:
-            print(f"챗봇 실행 중 오류 발생: {str(e)}")
-
-    def _display_article_info(self, main_article, score, related_articles):
-        """기사 정보 출력"""
-        print(f"\n주요 참고 기사:")
-        print(f"제목: {main_article['title']}")
-        print(f"관련도: {score:.2f}")
-        print(f"URL: {main_article['url']}")
-        if "categories" in main_article:
-            print(f"카테고리: {', '.join(main_article['categories'])}")
-        print(f"작성일: {main_article.get('crawled_date', '날짜 정보 없음')}")
-
-        if related_articles:
-            print(f"\n관련 기사들:")
-            for idx, article in enumerate(related_articles[:5], 1):
-                print(f"\n{idx}. {article['title']}")
-                print(f"   URL: {article['url']}")
-                print(f"   발행일: {article.get('published_date', '날짜 정보 없음')}")
-        print("")
+            st.error(f"쿼리 처리 중 오류: {e}")
+            return None, [], 0.0, "오류가 발생했습니다."
