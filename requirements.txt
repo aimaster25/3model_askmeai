@@ -7,3 +7,5 @@ beautifulsoup4==4.12.3
 requests==2.31.0
 asyncio==3.4.3
 streamlit-authenticator==0.2.2
+openai==1.1.1
+python-dotenv==1.0.0
