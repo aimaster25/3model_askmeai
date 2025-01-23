@@ -8,4 +8,7 @@ requests==2.31.0
 asyncio==3.4.3
 streamlit-authenticator==0.2.2
 openai==1.1.1
+streamlit
+google-cloud-aiplatform
+anthropic
 python-dotenv==1.0.0
