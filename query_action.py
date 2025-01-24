@@ -47,6 +47,22 @@ class DatabaseSearch:
             st.error(f"Elasticsearch 연결 실패: {e}")
             raise
 
+    def _bulk_index(self, actions):
+        """벌크 인덱싱 수행"""
+        try:
+            success_count = 0
+            error_count = 0
+            results = self.es.bulk(body=actions)
+            for item in results["items"]:
+                if item["index"]["status"] == 201:
+                    success_count += 1
+                else:
+                    error_count += 1
+            return success_count, error_count
+        except Exception as e:
+            print(f"벌크 인덱싱 오류: {e}")
+            return 0, len(actions)
+
     def sync_mongodb_to_elasticsearch(self):
         try:
             # 벌크 처리를 위한 리스트
