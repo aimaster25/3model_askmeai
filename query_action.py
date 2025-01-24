@@ -10,7 +10,7 @@ from google.generativeai import configure as palm_configure
 from google.generativeai import GenerativeModel as PalmModel
 
 # ======== OpenAI (chatGPT) ========
-from openai import OpenAI
+import openai
 
 # ======== Anthropic (Claude) ========
 import anthropic
@@ -18,7 +18,6 @@ import anthropic
 
 class DatabaseSearch:
     """Mongo + Elasticsearch 로 뉴스 기사 검색"""
-
     def __init__(self):
         # 1) Mongo 연결
         try:
@@ -93,16 +92,14 @@ class DatabaseSearch:
             processed = []
             for hit in result["hits"]["hits"]:
                 s = hit["_source"]
-                processed.append(
-                    {
-                        "title": s["title"],
-                        "content": s["cleaned_content"],
-                        "url": s["url"],
-                        "published_date": s.get("published_date", "날짜 정보 없음"),
-                        "categories": s.get("categories", []),
-                        "score": hit["_score"],
-                    }
-                )
+                processed.append({
+                    "title": s["title"],
+                    "content": s["cleaned_content"],
+                    "url": s["url"],
+                    "published_date": s.get("published_date","날짜 정보 없음"),
+                    "categories": s.get("categories", []),
+                    "score": hit["_score"],
+                })
             return processed
         except Exception as e:
             st.error(f"검색 오류: {e}")
@@ -138,9 +135,7 @@ class ResponseGeneration:
 
         # Anthropic API
         try:
-            self.anthropic_client = anthropic.Client(
-                api_key=st.secrets["ANTHROPIC_API_KEY"]
-            )
+            self.anthropic_client = anthropic.Client(api_key=st.secrets["ANTHROPIC_API_KEY"])
         except Exception as e:
             st.error(f"Anthropic API 설정 오류: {e}")
             self.anthropic_client = None
@@ -194,9 +189,7 @@ class ResponseGeneration:
                 # 풀컨텍스트
                 extra = ""
                 for i, art in enumerate(articles[1:3], start=1):
-                    extra += (
-                        f"- 추가기사{i}: {art['title']} (score={art['score']:.2f})\n"
-                    )
+                    extra += f"- 추가기사{i}: {art['title']} (score={art['score']:.2f})\n"
 
                 prompt = f"""당신은 AI 뉴스 챗봇입니다.
 질문: {query}
@@ -228,7 +221,7 @@ class ResponseGeneration:
             # gpt-4o-mini
             completion = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt_text}],
+                messages=[{"role":"user","content":prompt_text}],
                 max_tokens=512,
             )
             return completion.choices[0].message.content
@@ -236,9 +229,7 @@ class ResponseGeneration:
         elif model_name == "Claude":
             if not self.anthropic_client:
                 return "Anthropic 설정 오류"
-            claude_prompt = (
-                f"{anthropic.HUMAN_PROMPT} {prompt_text}\n{anthropic.AI_PROMPT}"
-            )
+            claude_prompt = f"{anthropic.HUMAN_PROMPT} {prompt_text}\n{anthropic.AI_PROMPT}"
             resp = self.anthropic_client.completions.create(
                 model="claude-3-5-sonnet-20241022",
                 prompt=claude_prompt,
@@ -251,7 +242,6 @@ class ResponseGeneration:
 
 class ResponseReview:
     """답변 검토(리뷰) -> 동일 모델로 재호출"""
-
     def __init__(self):
         # 모델별 객체 재사용하려면 ResponseGeneration 객체를 참조해야 함
         # 여기서는 간단히 secrets 재활용
@@ -268,21 +258,11 @@ class ResponseReview:
             pass
 
         try:
-            self.anthropic_client = anthropic.Client(
-                api_key=st.secrets["ANTHROPIC_API_KEY"]
-            )
+            self.anthropic_client = anthropic.Client(api_key=st.secrets["ANTHROPIC_API_KEY"])
         except:
             self.anthropic_client = None
 
-    def review_and_enhance_response(
-        self,
-        model_name,
-        query,
-        initial_response,
-        intent_analysis,
-        best_article,
-        has_articles,
-    ):
+    def review_and_enhance_response(self, model_name, query, initial_response, intent_analysis, best_article, has_articles):
         """(기사 있으면 기사 기반, 없으면 일반) -> 동일 모델로 '개선 프롬프트'"""
         if has_articles and best_article:
             # 기사 기반
@@ -324,7 +304,7 @@ class ResponseReview:
         elif model_name == "chatGPT":
             c = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt_text}],
+                messages=[{"role":"user","content":prompt_text}],
                 max_tokens=512,
             )
             return c.choices[0].message.content
@@ -332,9 +312,7 @@ class ResponseReview:
         elif model_name == "Claude":
             if not self.anthropic_client:
                 return "(Claude 오류)"
-            claude_prompt = (
-                f"{anthropic.HUMAN_PROMPT} {prompt_text}\n{anthropic.AI_PROMPT}"
-            )
+            claude_prompt = f"{anthropic.HUMAN_PROMPT} {prompt_text}\n{anthropic.AI_PROMPT}"
             resp = self.anthropic_client.completions.create(
                 model="claude-3-5-sonnet-20241022",
                 prompt=claude_prompt,
@@ -347,7 +325,6 @@ class ResponseReview:
 
 class NewsChatbot:
     """검색 -> 초기답변 -> 리뷰 -> 최종"""
-
     def __init__(self):
         self.db_search = DatabaseSearch()
         self.response_gen = ResponseGeneration()
@@ -359,18 +336,10 @@ class NewsChatbot:
             articles = await self.db_search.semantic_search(query)
 
             # 2) 초기답변
-            result = self.response_gen.generate_initial_response(
-                model_name, query, articles
-            )
+            result = self.response_gen.generate_initial_response(model_name, query, articles)
             # unpack
             if len(result) == 5:
-                (
-                    best_article,
-                    related_articles,
-                    relevance_score,
-                    init_resp,
-                    intent_analysis,
-                ) = result
+                best_article, related_articles, relevance_score, init_resp, intent_analysis = result
             else:
                 # (best_article, related_articles, score, init_resp)
                 best_article, related_articles, relevance_score, init_resp = result

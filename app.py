@@ -307,4 +307,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "initialized" not in st.session_state:
+        try:
+            db = DatabaseSearch()
+            db.sync_mongodb_to_elasticsearch()
+            st.session_state.bot = AuthenticatedChatbot()
+            st.session_state.initialized = True
+        except Exception as e:
+            st.error(f"초기화 오류: {str(e)}")
+            st.stop()
+
+    try:
+        st.session_state.bot.run()
+    except Exception as e:
+        st.error(f"실행 오류: {str(e)}")
