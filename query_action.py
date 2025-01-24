@@ -10,7 +10,10 @@ from google.generativeai import configure as palm_configure
 from google.generativeai import GenerativeModel as PalmModel
 
 # ======== OpenAI (chatGPT) ========
-import openai
+from openai import openai
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
 
 # ======== Anthropic (Claude) ========
 import anthropic
@@ -307,7 +310,7 @@ class ResponseGeneration:
 
         elif model_name == "chatGPT":
             # gpt-4o-mini
-            completion = openai.ChatCompletion.create(
+            completion = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens=512,
@@ -403,7 +406,7 @@ class ResponseReview:
             return resp.text
 
         elif model_name == "chatGPT":
-            c = openai.ChatCompletion.create(
+            c = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens=512,
