@@ -244,6 +244,7 @@ class AuthenticatedChatbot:
                     st.session_state.article_history = []
                     st.session_state.selected_chat = None
                     st.rerun()
+                    st.stop()  # rerun 호출 뒤 코드 중단
 
             for i, item in enumerate(st.session_state.search_history):
                 q = item["question"]
