@@ -266,7 +266,7 @@ class AuthenticatedChatbot:
                 return
 
         # 모델 선택
-        st.selectbox("AI 모델 선택", ["Gemini", "ChatGPT"], key="current_model")
+        st.selectbox("AI 모델 선택", ["Gemini", "chatGPT"], key="current_model")
 
         st.markdown(
             """
