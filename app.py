@@ -243,7 +243,7 @@ class AuthenticatedChatbot:
                     st.session_state.search_history = []
                     st.session_state.article_history = []
                     st.session_state.selected_chat = None
-                    st.experimental_rerun()
+                    st.rerun()
 
             for i, item in enumerate(st.session_state.search_history):
                 q = item["question"]
