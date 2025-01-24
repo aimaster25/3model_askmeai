@@ -313,6 +313,7 @@ class ResponseGeneration:
                 max_tokens=512,
             )
             text = completion.choices[0].message.content
+            return text
 
         elif model_name == "Claude":
             if not self.anthropic_client:
@@ -403,7 +404,7 @@ class ResponseReview:
             return resp.text
 
         elif model_name == "chatGPT":
-            c = client.chat.completions.create(
+            c = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens=512,
